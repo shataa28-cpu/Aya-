@@ -13,6 +13,14 @@ The product must distinguish AI-extracted information from verified catalog data
 
 **Core workflow:** Scan → Recognize → Verify → Explain → Save → Monitor
 
+### MVP platform decisions
+
+- **Frontend and hosting:** React/Vite application deployed on Vercel from the `medara-app` directory in the GitHub repository.
+- **Authentication and backend:** Supabase Auth and Supabase Postgres, with Row Level Security (RLS) on all user-owned data.
+- **Package images:** Supabase Storage private bucket with user-scoped access policies.
+- **Automatic deployment:** Connect Vercel to the GitHub repository. Pull requests receive preview deployments; commits pushed to `main` trigger a production deployment after the build succeeds. A local Git commit alone does not deploy until it is pushed to GitHub.
+- **Database changes:** Track schema changes as Supabase CLI migrations in the repository. Apply production migrations through an approved CI workflow using protected GitHub secrets; do not apply schema changes from browser code.
+
 ## 2. Problem
 
 Medicine packaging can be difficult to read, especially for older adults, caregivers, and people managing several household medicines. Households may also lose track of expiration dates, storage requirements, or what they have on hand.
@@ -24,6 +32,7 @@ Existing medicine information and inventory tools may not connect package recogn
 ### Product goals
 
 - Let users create an account and maintain a private, persistent medicine cabinet.
+- Persist authenticated user profiles and inventory in Supabase, protected by RLS.
 - Identify supported medicines from images using a real OCR service and a product catalog.
 - Show possible matches with their verification status and require user confirmation.
 - Present product information with traceable sources.
@@ -70,6 +79,8 @@ The MVP does not include shared household accounts or permission-based multi-use
 - Independent package or batch records with individual expiration dates.
 - Expiration calculations and in-app alerts.
 - User data access controls and privacy protections.
+- Supabase Auth, Postgres, private image storage, and RLS policies for all user-owned records.
+- Vercel preview deployments for pull requests and production deployment on pushes to `main`.
 
 ### P1: Include where feasible after P0 works
 
@@ -97,7 +108,9 @@ The MVP does not include shared household accounts or permission-based multi-use
 
 - Present Medara’s purpose and allow account creation or sign-in.
 - Support secure registration, login, logout, and password recovery through the selected authentication provider.
+- Use Supabase Auth for email/password registration, sign-in, sign-out, and password recovery.
 - Keep account and inventory data private to the authenticated user.
+- Enforce ownership in Supabase with RLS; frontend filtering alone is not an access-control mechanism.
 - Provide an initially empty cabinet for a new account.
 
 ### 6.2 Home Dashboard
@@ -170,9 +183,9 @@ The MVP does not include shared household accounts or permission-based multi-use
 
 ## 7. Data and Verification Requirements
 
-The system should support these entities:
+The system should support these entities in Supabase Postgres:
 
-- **Users:** Authentication reference, preferred language, reminder preferences, creation date.
+- **Profiles:** Supabase Auth user ID, preferred language, reminder preferences, creation date.
 - **Medicine catalog:** Product names, ingredients, strength, dosage form, manufacturer, verified identifiers, storage details, source, last-checked date.
 - **Household inventory:** User, catalog reference where available, quantity, expiration date, location, date added, notes, image reference, status.
 - **Alerts:** User, inventory record, alert type, message, alert date, read status.
@@ -181,13 +194,17 @@ The system should support these entities:
 
 Prioritize SFDA data and investigate its access conditions and technical feasibility. If an official integration is unavailable, use a limited local catalog of carefully verified products. Document its sources and limitations. Never present simulated or unverified data as current official information.
 
+Use version-controlled Supabase migrations for schema and RLS changes. Store uploaded package photos in a private Supabase Storage bucket; use user-scoped policies and signed URLs where access is needed. Keep user-owned data inaccessible to anonymous users and other accounts.
+
 ## 8. Safety, Privacy, and Accessibility
 
 - Product recognition remains unconfirmed until the user verifies it.
 - Uncertain OCR or matching must produce an uncertainty state, not a guessed answer.
 - No diagnosis, prescribing, personalized dosage advice, or advice to start or stop medication.
 - Protect inventory through authenticated access controls; one user must not be able to access another user’s records.
-- Do not expose API secrets in frontend code or sensitive user data in logs.
+- Enforce access with Supabase RLS and private Storage policies, not UI checks alone.
+- The Supabase project URL and publishable/anon key may be configured as Vercel client environment variables only when RLS is enabled. Never expose the Supabase service-role key, database password, or other privileged credentials in browser bundles, Git, or logs.
+- Keep Vercel and GitHub Actions secrets in their respective protected environment settings; do not commit `.env` files.
 - Collect only information needed for cabinet management and product evaluation.
 - Let users access, correct, and delete their inventory data.
 - Use readable typography, accessible contrast, clear labels, and keyboard-accessible controls.
@@ -201,8 +218,20 @@ Prioritize SFDA data and investigate its access conditions and technical feasibi
 - **Expiration alerts:** Reliable alerts depend on users entering accurate package expiration dates.
 - **Safety notices:** Product and batch matching must be sufficiently reliable before presenting a notice as applicable.
 - **Privacy and consent:** Research analytics require appropriate consent and data minimization.
+- **Platform setup:** Vercel project access, Supabase project credentials, GitHub integration, production environment variables, and database migration secrets must be configured before production deployment.
+- **Data residency:** Select Supabase and Vercel regions after reviewing Saudi user privacy, residency, and applicable compliance requirements; do not assume a region without review.
 
-## 10. Acceptance Criteria
+## 10. Deployment and Operations
+
+- Link the Vercel project to the GitHub repository and set the Vercel root directory to `medara-app`.
+- Use the Vite build command `npm run build` and output directory `dist`.
+- Deploy pull requests to Vercel Preview URLs for review. Deploy commits pushed to `main` to the production Vercel URL automatically after build checks pass.
+- A local commit that has not been pushed to GitHub must not be described as deployed.
+- Configure Supabase URL and publishable/anon key in Vercel for the appropriate Preview and Production environments. Keep service-role credentials and database passwords server-side or in protected migration secrets only.
+- Apply Supabase migrations through a controlled CI job before the app release that depends on them. A failed migration or build must fail the deployment and leave the previous production deployment available.
+- Document rollback steps for the Vercel deployment and database migrations. Back up production data and avoid destructive migrations without a recovery plan.
+
+## 11. Acceptance Criteria
 
 The MVP is ready for initial household testing when:
 
@@ -216,11 +245,16 @@ The MVP is ready for initial household testing when:
 8. Two packages of the same product can have different quantities and expiration dates.
 9. An unverified product does not receive invented ingredients, storage information, or safety notices.
 10. One user cannot read or modify another user’s private inventory.
+11. A pull request produces a Vercel Preview deployment without replacing Production.
+12. A successful commit pushed to `main` automatically builds and deploys the app to the production Vercel URL.
+13. A failed build does not replace the current production deployment.
+14. Supabase migrations are versioned, run through the approved deployment workflow, and do not expose privileged credentials.
 
-## 11. Delivery Priorities
+## 12. Delivery Priorities
 
-1. Authentication, database access controls, and persistent inventory.
+1. Supabase Auth, RLS, migrations, and persistent inventory.
 2. Scan/upload flow, OCR, verified catalog matching, and user confirmation.
 3. Medicine profile, cabinet management, and expiration monitoring.
-4. Focused usability and accessibility testing; fix safety and reliability gaps.
-5. Add secondary capabilities such as duplicate detection, broader Arabic recognition, disposal guidance, and official safety-notice integration as data access permits.
+4. Vercel Git integration, Preview/Production environments, and deployment checks.
+5. Focused usability and accessibility testing; fix safety and reliability gaps.
+6. Add secondary capabilities such as duplicate detection, broader Arabic recognition, disposal guidance, and official safety-notice integration as data access permits.
